@@ -13,7 +13,6 @@ Et pour le lancer :
 ```
 sudo ./"NomDuFichier.sh"
 ```
-sudo ./"NomDuFichier.sh"
 
 Ensuite le script nous demandera :
 - Mot de passe MariaDB
