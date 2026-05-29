@@ -6,11 +6,13 @@ Le script contient toute l'installation à partir d'une machine vierge ayant Ubu
 Pour lancer le script 
 Donner les droits au fichier du script :
 ```
-         "sudo chmod +x "NomDuFichier.sh"
+sudo chmod +x "NomDuFichier.sh
 ```
-sudo chmod +x "NomDuFichier.sh"
 
 Et pour le lancer :
+```
+sudo ./"NomDuFichier.sh"
+```
 sudo ./"NomDuFichier.sh"
 
 Ensuite le script nous demandera :
