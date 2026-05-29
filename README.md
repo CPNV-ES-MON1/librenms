@@ -1,3 +1,26 @@
+#Déploiement du Script
+
+Script d'installation LibreNMS
+Le script contient toute l'installation à partir d'une machine vierge ayant Ubuntu 24.04.
+
+Pour lancer le script 
+Donner les droits au fichier du script :
+sudo chmod +x "NomDuFichier.sh"
+
+Et pour le lancer :
+sudo ./"NomDuFichier.sh"
+
+Ensuite le script nous demandera :
+- Mot de passe MariaDB
+- Nom d'utilisateur admin LibreNMS
+- Mot de passe admin LibreNMS
+
+
+
+
+
+
+
 # LIBRE NMS
 
 ## Description
