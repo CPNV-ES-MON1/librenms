@@ -19,50 +19,119 @@ error()   { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 # =============================================================================
 # VARIABLES FIXES
 # =============================================================================
+DATA_DISK="/dev/sdb"
+DATA_MOUNT="/data"
+
 DB_NAME="librenms"
 DB_USER="librenms"
+SNMP_COMMUNITY="public"
 TIMEZONE="Europe/Zurich"
 PHP_TARGET="8.3"
 LIBRENMS_DIR="/opt/librenms"
 SERVER_IP=$(hostname -I | awk '{print $1}')
 APP_URL="http://${SERVER_IP}"
 
-# =============================================================================
-# SAISIE INTERACTIVE DES MOTS DE PASSE
-# Rien n'est stocké en clair dans le script
-# =============================================================================
-echo ""
-echo -e "${BLUE}=== Configuration de l'installation ===${NC}"
-echo ""
+# Valeurs par défaut (surchargées par les arguments)
+DB_PASS=""
+ADMIN_USER=""
+ADMIN_PASS=""
 
-# Mot de passe base de données
-while true; do
-  read -s -p "Mot de passe pour l'utilisateur MariaDB '${DB_USER}' : " DB_PASS; echo
-  read -s -p "Confirmez le mot de passe MariaDB : " DB_PASS_CONFIRM; echo
-  [ "$DB_PASS" = "$DB_PASS_CONFIRM" ] && break
-  echo -e "${RED}Les mots de passe ne correspondent pas, réessayez.${NC}"
+# =============================================================================
+# PARSING DES ARGUMENTS
+# Usage: sudo bash install_librenms.sh --db-pass "xxx" --admin-user "yyy" --admin-pass "zzz"
+# =============================================================================
+usage() {
+  echo ""
+  echo "Usage : sudo bash $0 --db-pass <mdp_db> --admin-user <user> --admin-pass <mdp_admin>"
+  echo ""
+  echo "  --db-pass      Mot de passe de l'utilisateur MariaDB 'librenms'"
+  echo "  --admin-user   Nom d'utilisateur administrateur LibreNMS"
+  echo "  --admin-pass   Mot de passe de l'administrateur LibreNMS"
+  echo ""
+  echo "Exemple :"
+  echo "  sudo bash $0 --db-pass 'P@ssw0rd!' --admin-user 'cpnv' --admin-pass 'Admin2026'"
+  echo ""
+  exit 1
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --db-pass)    DB_PASS="$2";    shift 2 ;;
+    --admin-user) ADMIN_USER="$2"; shift 2 ;;
+    --admin-pass) ADMIN_PASS="$2"; shift 2 ;;
+    --help|-h)    usage ;;
+    *) error "Argument inconnu : $1 — utilisez --help pour l'aide." ;;
+  esac
 done
 
-# Nom d'utilisateur admin LibreNMS
-read -p "Nom d'utilisateur admin LibreNMS : " ADMIN_USER
-
-# Mot de passe admin LibreNMS
-while true; do
-  read -s -p "Mot de passe admin LibreNMS : " ADMIN_PASS; echo
-  read -s -p "Confirmez le mot de passe admin : " ADMIN_PASS_CONFIRM; echo
-  [ "$ADMIN_PASS" = "$ADMIN_PASS_CONFIRM" ] && break
-  echo -e "${RED}Les mots de passe ne correspondent pas, réessayez.${NC}"
-done
-
-# Community SNMP — valeur fixe, visible dans snmpd.conf de toute façon
-SNMP_COMMUNITY="public"
+# Vérification que tous les arguments obligatoires sont fournis
+MISSING=0
+[ -z "$DB_PASS" ]    && warn "Argument manquant : --db-pass"    && MISSING=1
+[ -z "$ADMIN_USER" ] && warn "Argument manquant : --admin-user" && MISSING=1
+[ -z "$ADMIN_PASS" ] && warn "Argument manquant : --admin-pass" && MISSING=1
+[ "$MISSING" -eq 1 ] && usage
 
 echo ""
-echo -e "${GREEN}Configuration validée — démarrage de l'installation...${NC}"
-echo -e "  IP détectée   : ${BLUE}${APP_URL}${NC}"
-echo -e "  Admin         : ${YELLOW}${ADMIN_USER}${NC}"
+echo -e "${GREEN}=== Démarrage de l'installation ===${NC}"
+echo -e "  IP détectée : ${BLUE}${APP_URL}${NC}"
+echo -e "  Admin       : ${YELLOW}${ADMIN_USER}${NC}"
 echo ""
-sleep 2
+sleep 1
+
+# =============================================================================
+# 0. VÉRIFICATION ET MONTAGE DU DATA STORAGE (sdb -> /data)
+#    Tout /opt/librenms sera sur sdb via un lien symbolique
+# =============================================================================
+info "Vérification du data storage (${DATA_DISK})..."
+
+if ! lsblk "${DATA_DISK}" &>/dev/null; then
+  error "Le disque ${DATA_DISK} est introuvable. Vérifiez que le data storage est bien connecté."
+fi
+
+# Vérifier si sdb est déjà monté sur /data
+if mountpoint -q "${DATA_MOUNT}"; then
+  success "${DATA_MOUNT} est déjà monté."
+else
+  info "${DATA_DISK} non monté, formatage et montage sur ${DATA_MOUNT}..."
+
+  # Vérifier si le disque a déjà une partition/filesystem
+  FS_TYPE=$(blkid -o value -s TYPE "${DATA_DISK}" 2>/dev/null || echo "")
+
+  if [ -z "$FS_TYPE" ]; then
+    info "Aucun filesystem détecté sur ${DATA_DISK}, création d'un ext4..."
+    mkfs.ext4 -F "${DATA_DISK}"
+    success "Filesystem ext4 créé sur ${DATA_DISK}."
+  else
+    info "Filesystem existant détecté sur ${DATA_DISK} : ${FS_TYPE}, on garde."
+  fi
+
+  # Création du point de montage et montage
+  mkdir -p "${DATA_MOUNT}"
+  mount "${DATA_DISK}" "${DATA_MOUNT}"
+  success "${DATA_DISK} monté sur ${DATA_MOUNT}."
+
+  # Ajout dans /etc/fstab pour montage automatique au boot
+  UUID=$(blkid -o value -s UUID "${DATA_DISK}")
+  if ! grep -q "$UUID" /etc/fstab; then
+    echo "UUID=${UUID} ${DATA_MOUNT} ext4 defaults 0 2" >> /etc/fstab
+    success "Montage ajouté dans /etc/fstab (UUID: ${UUID})."
+  fi
+fi
+
+# Création du répertoire librenms sur le data storage
+mkdir -p "${DATA_MOUNT}/librenms"
+
+# Lien symbolique /opt/librenms -> /data/librenms
+if [ -L "${LIBRENMS_DIR}" ]; then
+  warn "Le lien symbolique ${LIBRENMS_DIR} existe déjà, on continue."
+elif [ -d "${LIBRENMS_DIR}" ]; then
+  warn "${LIBRENMS_DIR} existe comme dossier réel, déplacement vers ${DATA_MOUNT}/librenms..."
+  mv "${LIBRENMS_DIR}" "${DATA_MOUNT}/librenms"
+  ln -s "${DATA_MOUNT}/librenms" "${LIBRENMS_DIR}"
+else
+  ln -s "${DATA_MOUNT}/librenms" "${LIBRENMS_DIR}"
+fi
+success "Lien symbolique : ${LIBRENMS_DIR} -> ${DATA_MOUNT}/librenms"
 
 # =============================================================================
 # 1. DÉPÔT PHP sury.org + épinglage PHP 8.3
@@ -156,8 +225,10 @@ else
   warn "Le dépôt LibreNMS existe déjà, on passe le clone."
 fi
 
-chown -R librenms:librenms "$LIBRENMS_DIR"
-chmod 771 "$LIBRENMS_DIR"
+# Chown sur le dossier RÉEL (sdb/data) et non le lien symbolique
+# car chown -R sur un symlink ne propage pas aux fichiers cibles
+chown -R librenms:librenms "${DATA_MOUNT}/librenms"
+chmod 771 "${DATA_MOUNT}/librenms"
 
 # =============================================================================
 # 5. CONFIGURATION MARIADB
@@ -246,7 +317,8 @@ mkdir -p \
   "$LIBRENMS_DIR/bootstrap/cache" \
   "$LIBRENMS_DIR/storage"
 
-chown -R librenms:librenms "$LIBRENMS_DIR"
+# Chown sur le dossier réel (pas le symlink)
+chown -R librenms:librenms "${DATA_MOUNT}/librenms"
 
 setfacl -d -m g::rwx \
   "$LIBRENMS_DIR/rrd" \
@@ -424,7 +496,7 @@ Group=librenms
 PIDFile=/run/rrdcached.pid
 ExecStart=/usr/bin/rrdcached \
   -F \
-  -b /opt/librenms/rrd/ \
+  -b ${DATA_MOUNT}/librenms/rrd/ \
   -B \
   -j /var/lib/rrdcached/journal/ \
   -l unix:/run/rrdcached.sock \
@@ -449,7 +521,7 @@ DAEMON_USER=librenms
 DAEMON_GROUP=librenms
 WRITE_TIMEOUT=1800
 WRITE_JITTER=1800
-BASE_PATH=/opt/librenms/rrd/
+BASE_PATH=${DATA_MOUNT}/librenms/rrd/
 JOURNAL_PATH=/var/lib/rrdcached/journal/
 SOCKFILE=/run/rrdcached.sock
 SOCKGROUP=librenms
@@ -458,6 +530,45 @@ RRDC_EOF
 
 systemctl enable "$RRDC_SERVICE"
 systemctl restart "$RRDC_SERVICE"
+
+# Attente que le socket soit créé avant de continuer
+info "Attente création du socket rrdcached..."
+SOCK_OK=0
+for i in $(seq 1 15); do
+  if [ -S "/run/rrdcached.sock" ]; then
+    SOCK_OK=1
+    break
+  fi
+  sleep 2
+done
+
+if [ "$SOCK_OK" -eq 1 ]; then
+  success "Socket /run/rrdcached.sock disponible."
+else
+  # Le service système lit /etc/default/rrdcached mais parfois ignore SOCKFILE
+  # On relance avec les options explicites via un override systemd
+  warn "Socket non créé, création d'un override systemd pour forcer les options..."
+  mkdir -p /etc/systemd/system/rrdcached.service.d/
+  cat > /etc/systemd/system/rrdcached.service.d/override.conf <<OVERRIDE_EOF
+[Service]
+ExecStart=
+ExecStart=/usr/bin/rrdcached -F -b ${DATA_MOUNT}/librenms/rrd/ -B -j /var/lib/rrdcached/journal/ -l unix:/run/rrdcached.sock -s librenms -m 0660 -t 4 -w 1800 -z 1800
+User=librenms
+Group=librenms
+OVERRIDE_EOF
+  systemctl daemon-reload
+  systemctl restart "$RRDC_SERVICE"
+
+  # Nouvelle attente
+  for i in $(seq 1 15); do
+    if [ -S "/run/rrdcached.sock" ]; then
+      SOCK_OK=1
+      break
+    fi
+    sleep 2
+  done
+  [ "$SOCK_OK" -eq 1 ]     && success "Socket /run/rrdcached.sock disponible après override."     || warn "Socket toujours absent — vérifiez journalctl -u rrdcached"
+fi
 success "rrdcached configuré et démarré (service : $RRDC_SERVICE)."
 
 # =============================================================================
@@ -511,6 +622,10 @@ success "APP_URL défini à ${APP_URL}"
 info "Configuration du socket rrdcached dans LibreNMS..."
 su - librenms -s /bin/bash -c \
   "lnms config:set rrdcached 'unix:/run/rrdcached.sock'" 2>/dev/null || true
+
+# S'assurer que le chemin rrd dans LibreNMS pointe vers le chemin réel
+su - librenms -s /bin/bash -c \
+  "lnms config:set rrd_dir '${DATA_MOUNT}/librenms/rrd'" 2>/dev/null || true
 success "Socket rrdcached configuré."
 
 # =============================================================================
