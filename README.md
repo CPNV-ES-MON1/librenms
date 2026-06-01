@@ -11,7 +11,7 @@ sudo chmod +x "NomDuFichier.sh"
 
 Lancement du script
 ```
-sudo bash "NomDuFichier.sh" --db-pass "TonMotDePasse" --admin-user "TonAdmin" --admin-pass "TonMotDePasseAdmin"
+sudo bash "NomDuFichier.sh" --db-pass "Pa$$w0rd" --admin-user "cpnv" --admin-pass "Pa$$w0rd"
 ```
 Arguments obligatoires :
 - --db-pass Mot de passe de l'utilisateur MariaDB
