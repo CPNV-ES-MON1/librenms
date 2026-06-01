@@ -20,11 +20,11 @@ Arguments obligatoires :
 
 Ce que fait le script automatiquement
 
-Formate et monte sdb sur /data et y installe LibreNMS via un lien symbolique /opt/librenms → /data/librenms
-Installe et configure tous les composants (PHP 8.3, Nginx, MariaDB, SNMP, rrdcached)
-Crée la base de données et l'utilisateur
-Déploie LibreNMS et crée le compte administrateur
-Ajoute la machine locale comme device et lance la première collecte de métriques
+- Formate et monte sdb sur /data et y installe LibreNMS via un lien symbolique /opt/librenms → /data/librenms
+- Installe et configure tous les composants (PHP 8.3, Nginx, MariaDB, SNMP, rrdcached)
+- Crée la base de données et l'utilisateur
+- Déploie LibreNMS et crée le compte administrateur
+- Ajoute la machine locale comme device et lance la première collecte de métriques
 
 À la fin du script, LibreNMS est accessible via http://<IP_DE_LA_MACHINE>
 
