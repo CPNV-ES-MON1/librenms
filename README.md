@@ -10,9 +10,13 @@ sudo chmod +x "NomDuFichier.sh"
 ```
 
 Lancement du script
-bashsudo bash install_librenms.sh --db-pass "TonMotDePasse" --admin-user "TonAdmin" --admin-pass "TonMotDePasseAdmin"
+```
+sudo bash "NomDuFichier.sh" --db-pass "TonMotDePasse" --admin-user "TonAdmin" --admin-pass "TonMotDePasseAdmin"
+```
 Arguments obligatoires :
-ArgumentDescription--db-passMot de passe de l'utilisateur MariaDB--admin-userNom d'utilisateur administrateur LibreNMS--admin-passMot de passe administrateur LibreNMS
+- --db-pass Mot de passe de l'utilisateur MariaDB
+- --admin-user Nom d'utilisateur administrateur LibreNMS
+- --admin-pass Mot de passe administrateur LibreNMS
 
 Ce que fait le script automatiquement
 
