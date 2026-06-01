@@ -9,16 +9,20 @@ Donner les droits au fichier du script :
 sudo chmod +x "NomDuFichier.sh"
 ```
 
-Et pour le lancer :
-```
-sudo ./"NomDuFichier.sh"
-```
+Lancement du script
+bashsudo bash install_librenms.sh --db-pass "TonMotDePasse" --admin-user "TonAdmin" --admin-pass "TonMotDePasseAdmin"
+Arguments obligatoires :
+ArgumentDescription--db-passMot de passe de l'utilisateur MariaDB--admin-userNom d'utilisateur administrateur LibreNMS--admin-passMot de passe administrateur LibreNMS
 
-Ensuite le script nous demandera :
-- Mot de passe MariaDB
-- Nom d'utilisateur admin LibreNMS
-- Mot de passe admin LibreNMS
+Ce que fait le script automatiquement
 
+Formate et monte sdb sur /data et y installe LibreNMS via un lien symbolique /opt/librenms → /data/librenms
+Installe et configure tous les composants (PHP 8.3, Nginx, MariaDB, SNMP, rrdcached)
+Crée la base de données et l'utilisateur
+Déploie LibreNMS et crée le compte administrateur
+Ajoute la machine locale comme device et lance la première collecte de métriques
+
+À la fin du script, LibreNMS est accessible via http://<IP_DE_LA_MACHINE>
 
 
 
