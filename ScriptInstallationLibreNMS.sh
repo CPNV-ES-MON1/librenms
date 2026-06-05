@@ -19,7 +19,12 @@ error()   { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 # =============================================================================
 # VARIABLES FIXES
 # =============================================================================
-DATA_DISK="/dev/sdb"
+# Détection automatique du data storage
+# Cherche le deuxième disque non partitionné (pas le disque OS)
+# Supporte sdb (SATA/SCSI) et nvme1n1 (NVMe)
+OS_DISK=$(lsblk -ndo PKNAME $(findmnt -n -o SOURCE /) 2>/dev/null || echo "")
+DATA_DISK=$(lsblk -ndo NAME,TYPE | awk '$2=="disk" {print $1}' | grep -v "^${OS_DISK}$" | head -1)
+DATA_DISK="/dev/${DATA_DISK}"
 DATA_MOUNT="/data"
 
 DB_NAME="librenms"
@@ -79,8 +84,9 @@ echo ""
 sleep 1
 
 # =============================================================================
-# 0. VÉRIFICATION ET MONTAGE DU DATA STORAGE (sdb -> /data)
-#    Tout /opt/librenms sera sur sdb via un lien symbolique
+# 0. VÉRIFICATION ET MONTAGE DU DATA STORAGE
+#    Détection automatique du second disque (sdb, nvme1n1, etc.)
+#    Tout /opt/librenms sera sur ce disque via un lien symbolique
 # =============================================================================
 info "Vérification du data storage (${DATA_DISK})..."
 
@@ -88,7 +94,7 @@ if ! lsblk "${DATA_DISK}" &>/dev/null; then
   error "Le disque ${DATA_DISK} est introuvable. Vérifiez que le data storage est bien connecté."
 fi
 
-# Vérifier si sdb est déjà monté sur /data
+# Vérifier si le data disk est déjà monté sur /data
 if mountpoint -q "${DATA_MOUNT}"; then
   success "${DATA_MOUNT} est déjà monté."
 else
@@ -225,7 +231,7 @@ else
   warn "Le dépôt LibreNMS existe déjà, on passe le clone."
 fi
 
-# Chown sur le dossier RÉEL (sdb/data) et non le lien symbolique
+# Chown sur le dossier RÉEL (data disk) et non le lien symbolique
 # car chown -R sur un symlink ne propage pas aux fichiers cibles
 chown -R librenms:librenms "${DATA_MOUNT}/librenms"
 chmod 771 "${DATA_MOUNT}/librenms"
@@ -451,11 +457,15 @@ success "Cron installé."
 # 15. SCHEDULER SYSTEMD
 # =============================================================================
 info "Activation du scheduler LibreNMS..."
-cp "$LIBRENMS_DIR/dist/librenms-scheduler.service" /etc/systemd/system/
-cp "$LIBRENMS_DIR/dist/librenms-scheduler.timer"   /etc/systemd/system/
+# Les fichiers dist contiennent /opt/librenms en dur
+# On remplace par le chemin réel /data/librenms avant de les copier
+sed "s#/opt/librenms#${DATA_MOUNT}/librenms#g"   "$LIBRENMS_DIR/dist/librenms-scheduler.service"   > /etc/systemd/system/librenms-scheduler.service
+
+sed "s#/opt/librenms#${DATA_MOUNT}/librenms#g"   "$LIBRENMS_DIR/dist/librenms-scheduler.timer"   > /etc/systemd/system/librenms-scheduler.timer
+
 systemctl daemon-reload
 systemctl enable librenms-scheduler.timer
-systemctl start  librenms-scheduler.timer
+systemctl start librenms-scheduler.timer
 
 # Vérification que le scheduler est bien actif
 if systemctl is-active --quiet librenms-scheduler.timer; then
