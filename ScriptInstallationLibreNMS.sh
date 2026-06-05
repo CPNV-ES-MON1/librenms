@@ -34,7 +34,7 @@ TIMEZONE="Europe/Zurich"
 PHP_TARGET="8.3"
 LIBRENMS_DIR="/opt/librenms"
 SERVER_IP=$(hostname -I | awk '{print $1}')
-APP_URL="http://${SERVER_IP}"
+APP_URL="http://${SERVER_IP}:8080"
 
 # Valeurs par défaut (surchargées par les arguments)
 DB_PASS=""
@@ -376,7 +376,7 @@ success "PHP-FPM configuré."
 info "Configuration de Nginx..."
 cat > /etc/nginx/conf.d/librenms.conf <<'NGINX_EOF'
 server {
-    listen      80;
+    listen      8080;
     server_name localhost;
     root        /opt/librenms/html;
     index       index.php;
