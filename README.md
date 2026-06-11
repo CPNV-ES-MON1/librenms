@@ -20,7 +20,6 @@ Arguments obligatoires :
 
 Ce que fait le script automatiquement
 
-- Formate et monte sdb sur /data et y installe LibreNMS via un lien symbolique /opt/librenms → /data/librenms
 - Installe et configure tous les composants (PHP 8.3, Nginx, MariaDB, SNMP, rrdcached)
 - Crée la base de données et l'utilisateur
 - Déploie LibreNMS et crée le compte administrateur
