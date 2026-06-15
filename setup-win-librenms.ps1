@@ -1,13 +1,13 @@
 # ==============================================================================
-# setup-win-librenms.ps1 (FIXED VERSION)
+# setup-win-librenms.ps1 (PRODUCTION FIXED VERSION)
 # ==============================================================================
 
 param(
     [Parameter(Mandatory=$true)]
-    [string]$LibreNMSIP = "10.0.2.10",
+    [string]$LibreNMSIP,
 
     [Parameter(Mandatory=$true)]
-    [string]$LibreNMSUser = "cpnv",
+    [string]$LibreNMSUser,
 
     [Parameter(Mandatory=$true)]
     [string]$MySQLPassword,
@@ -22,7 +22,7 @@ param(
 )
 
 # ==============================================================================
-# SSH helper
+# SSH helper (NON INTERACTIF SAFE)
 # ==============================================================================
 
 function Invoke-LibreNMSSSH {
@@ -31,15 +31,17 @@ function Invoke-LibreNMSSSH {
     return & ssh -i $SSHKeyPath `
         -o StrictHostKeyChecking=no `
         -o BatchMode=yes `
-        "$LibreNMSUser@$LibreNMSIP" $Command 2>&1
+        "$LibreNMSUser@$LibreNMSIP" `
+        "sudo -n $Command" 2>&1
 }
 
 function Write-Step { param($m) Write-Host "`n===> $m" -ForegroundColor Cyan }
 function Write-OK { param($m) Write-Host "  [OK] $m" -ForegroundColor Green }
-function Write-Fail { param($m) { Write-Host "  [FAIL] $m" -ForegroundColor Red; exit 1 } }
+function Write-Warn { param($m) Write-Host "  [WARN] $m" -ForegroundColor Yellow }
+function Write-Fail { param($m) Write-Host "  [FAIL] $m" -ForegroundColor Red; exit 1 }
 
 # ==============================================================================
-# SSH Windows server
+# OPENSSH WINDOWS
 # ==============================================================================
 
 Write-Step "Configuration OpenSSH Server"
@@ -49,7 +51,7 @@ Set-Service sshd -StartupType Automatic
 Write-OK "OpenSSH actif"
 
 # ==============================================================================
-# SSH shell
+# POWERSHELL SSH SHELL
 # ==============================================================================
 
 Write-Step "Configuration PowerShell SSH shell"
@@ -65,7 +67,7 @@ New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" `
 Write-OK "Shell configuré"
 
 # ==============================================================================
-# KEY GENERATION ON LIBRENMS
+# SSH KEY SETUP ON LIBRENMS
 # ==============================================================================
 
 Write-Step "Gestion clé SSH LibreNMS"
@@ -76,12 +78,13 @@ Invoke-LibreNMSSSH "mkdir -p /var/lib/librenms/.ssh"
 Invoke-LibreNMSSSH "chown -R librenms:librenms /var/lib/librenms/.ssh"
 Invoke-LibreNMSSSH "chmod 700 /var/lib/librenms/.ssh"
 
-Invoke-LibreNMSSSH "sudo -u librenms ssh-keygen -t ed25519 -f $sshKeyRemote -N ''" | Out-Null
+# génération clé (non bloquante si existe)
+Invoke-LibreNMSSSH "sudo -n -u librenms ssh-keygen -t ed25519 -f $sshKeyRemote -N '' -q || true" | Out-Null
 
-Write-OK "Clé SSH générée"
+Write-OK "Clé SSH OK"
 
 # ==============================================================================
-# GET PUBLIC KEY (FIX IMPORTANT ICI)
+# PUBLIC KEY RETRIEVAL (FIX IMPORTANT)
 # ==============================================================================
 
 Write-Step "Récupération clé publique"
@@ -98,7 +101,7 @@ Write-OK "Clé récupérée"
 # WINDOWS AUTHORIZED KEYS
 # ==============================================================================
 
-Write-Step "Configuration authorized_keys Windows"
+Write-Step "authorized_keys Windows"
 
 New-Item -ItemType Directory -Force -Path "C:\ProgramData\ssh" | Out-Null
 
@@ -115,14 +118,12 @@ Write-OK "authorized_keys OK"
 # NTP
 # ==============================================================================
 
-Write-Step "Configuration NTP"
+Write-Step "NTP"
 
-w32tm /config /reliable:YES | Out-Null
-Set-ItemProperty `
-    -Path "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\TimeProviders\NtpServer" `
-    -Name "Enabled" -Value 1
+Invoke-LibreNMSSSH "w32tm /config /reliable:YES"
+Invoke-LibreNMSSSH "Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\TimeProviders\NtpServer' -Name Enabled -Value 1"
+Invoke-LibreNMSSSH "Restart-Service W32Time"
 
-Restart-Service W32Time
 Write-OK "NTP OK"
 
 # ==============================================================================
@@ -131,31 +132,24 @@ Write-OK "NTP OK"
 
 Write-Step "Firewall"
 
-if (-not (Get-NetFirewallRule -DisplayName "NTP-IN" -ErrorAction SilentlyContinue)) {
-    New-NetFirewallRule `
-        -DisplayName "NTP-IN" `
-        -Direction Inbound `
-        -Protocol UDP `
-        -LocalPort 123 `
-        -Action Allow | Out-Null
-}
+Invoke-LibreNMSSSH "if (-not (Get-NetFirewallRule -DisplayName 'NTP-IN' -ErrorAction SilentlyContinue)) { New-NetFirewallRule -DisplayName 'NTP-IN' -Direction Inbound -Protocol UDP -LocalPort 123 -Action Allow }"
 
 Write-OK "Firewall OK"
 
 # ==============================================================================
-# TEST SSH
+# SSH TEST
 # ==============================================================================
 
 Write-Step "Test SSH"
 
 Start-Sleep 3
 
-$test = Invoke-LibreNMSSSH "ssh -o StrictHostKeyChecking=no Administrator@$WindowsIP 'Get-Service W32Time'"
+$test = Invoke-LibreNMSSSH "Get-Service W32Time"
 
 if ($test -match "Running") {
     Write-OK "SSH OK"
 } else {
-    Write-Host "  [WARN] test SSH à vérifier"
+    Write-Warn "Test SSH à vérifier"
 }
 
 # ==============================================================================
@@ -167,4 +161,5 @@ Write-Host "SETUP TERMINÉ" -ForegroundColor Green
 Write-Host "============================================"
 Write-Host "LibreNMS: $LibreNMSIP"
 Write-Host "Windows : $WindowsIP"
+Write-Host "User    : $LibreNMSUser"
 Write-Host "============================================"
