@@ -1,21 +1,22 @@
 # ==============================================================================
 # setup-win-librenms.ps1
 # Configuration automatique du client Windows pour LibreNMS
-# Usage: .\setup-win-librenms.ps1 -LibreNMSIP <IP> -LibreNMSUser <user> -LibreNMSPassword <pass> -MySQLPassword <pass>
+# Usage: .\setup-win-librenms.ps1 -LibreNMSIP <IP> -LibreNMSUser <user> -MySQLPassword <pass>
+# Pre-requis: authentification par cle SSH deja configuree vers le serveur LibreNMS
+#             (cle privee: $env:USERPROFILE\.ssh\id_ed25519_librenms)
 # ==============================================================================
 
 param(
     [Parameter(Mandatory=$true)]
-    [string]$LibreNMSIP = "10.229.37.249",
+    [string]$LibreNMSIP = "10.0.2.10",
 
     [Parameter(Mandatory=$true)]
     [string]$LibreNMSUser = "cpnv",
 
     [Parameter(Mandatory=$true)]
-    [string]$LibreNMSPassword,
-
-    [Parameter(Mandatory=$true)]
     [string]$MySQLPassword,
+
+    [string]$SSHKeyPath = "$env:USERPROFILE\.ssh\id_ed25519_librenms",
 
     [string]$WindowsIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notlike "*Loopback*" } | Select-Object -First 1 -ExpandProperty IPAddress),
     [string]$SNMPCommunity = "public"
@@ -41,21 +42,12 @@ function Write-Fail {
     exit 1
 }
 
-function Invoke-SSHCommand {
-    param(
-        [string]$Command,
-        [string]$KeyPath = "C:\ProgramData\librenms\librenms_restart"
-    )
-    $result = & ssh -i $KeyPath `
+# Execute une commande sur le serveur LibreNMS via SSH avec la cle privee
+function Invoke-LibreNMSSSH {
+    param([string]$Command)
+    $result = & ssh -i $SSHKeyPath `
         -o StrictHostKeyChecking=no `
         -o BatchMode=yes `
-        "$LibreNMSUser@$LibreNMSIP" $Command 2>&1
-    return $result
-}
-
-function Invoke-SSHCommandWithPassword {
-    param([string]$Command)
-    $result = & ssh -o StrictHostKeyChecking=no `
         "$LibreNMSUser@$LibreNMSIP" $Command 2>&1
     return $result
 }
@@ -92,32 +84,22 @@ New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" `
 Write-OK "PowerShell configuré comme shell SSH par défaut"
 
 # ==============================================================================
-# ÉTAPE 3 : Générer la clé SSH sur le serveur LibreNMS via SSH avec mot de passe
+# ÉTAPE 3 : Générer la clé SSH sur le serveur LibreNMS (cote librenms)
 # ==============================================================================
 
 Write-Step "Génération de la clé SSH sur le serveur LibreNMS"
 
-# Utilise plink (PuTTY) ou ssh avec sshpass si disponible
-# Sur Windows Server Core on utilise ssh avec expect via la commande suivante
-
 $sshKeyPath = "/var/lib/librenms/.ssh/librenms_restart"
 
 # Vérifier si la clé existe déjà
-$checkKey = echo $LibreNMSPassword | & ssh -o StrictHostKeyChecking=no `
-    -o PasswordAuthentication=yes `
-    "$LibreNMSUser@$LibreNMSIP" `
-    "test -f $sshKeyPath && echo EXISTS || echo NOTFOUND" 2>&1
+$checkKey = Invoke-LibreNMSSSH "test -f $sshKeyPath && echo EXISTS || echo NOTFOUND"
 
 if ($checkKey -match "NOTFOUND") {
     # Générer la clé
-    echo $LibreNMSPassword | & ssh -o StrictHostKeyChecking=no `
-        "$LibreNMSUser@$LibreNMSIP" `
-        "ssh-keygen -t ed25519 -f $sshKeyPath -N ''" 2>&1 | Out-Null
+    Invoke-LibreNMSSSH "ssh-keygen -t ed25519 -f $sshKeyPath -N ''" | Out-Null
 
     # Créer le dossier et mettre les permissions
-    echo $LibreNMSPassword | & ssh -o StrictHostKeyChecking=no `
-        "$LibreNMSUser@$LibreNMSIP" `
-        "sudo mkdir -p /var/lib/librenms/.ssh && sudo chown -R librenms:librenms /var/lib/librenms/.ssh && sudo chmod 600 $sshKeyPath" 2>&1 | Out-Null
+    Invoke-LibreNMSSSH "sudo mkdir -p /var/lib/librenms/.ssh && sudo chown -R librenms:librenms /var/lib/librenms/.ssh && sudo chmod 600 $sshKeyPath" | Out-Null
 
     Write-OK "Clé SSH générée sur le serveur LibreNMS"
 } else {
@@ -130,9 +112,7 @@ if ($checkKey -match "NOTFOUND") {
 
 Write-Step "Récupération de la clé publique depuis LibreNMS"
 
-$pubKey = echo $LibreNMSPassword | & ssh -o StrictHostKeyChecking=no `
-    "$LibreNMSUser@$LibreNMSIP" `
-    "sudo cat ${sshKeyPath}.pub" 2>&1
+$pubKey = Invoke-LibreNMSSSH "sudo cat ${sshKeyPath}.pub"
 
 if (-not $pubKey -or $pubKey -notmatch "ssh-ed25519") {
     Write-Fail "Impossible de récupérer la clé publique"
@@ -190,9 +170,7 @@ Write-Step "Test de la connexion SSH depuis LibreNMS vers Windows"
 # Attendre que sshd soit prêt
 Start-Sleep -Seconds 3
 
-$testSSH = echo $LibreNMSPassword | & ssh -o StrictHostKeyChecking=no `
-    "$LibreNMSUser@$LibreNMSIP" `
-    "sudo -u librenms ssh -i $sshKeyPath -o StrictHostKeyChecking=no Administrator@$WindowsIP 'Get-Service W32Time' 2>&1" 2>&1
+$testSSH = Invoke-LibreNMSSSH "sudo -u librenms ssh -i $sshKeyPath -o StrictHostKeyChecking=no Administrator@$WindowsIP 'Get-Service W32Time' 2>&1"
 
 if ($testSSH -match "W32Time") {
     Write-OK "Connexion SSH depuis LibreNMS vers Windows fonctionne"
@@ -209,9 +187,7 @@ Write-Step "Création du script de restart sur LibreNMS"
 
 $scriptContent = "#!/bin/bash`nssh -i /var/lib/librenms/.ssh/librenms_restart -o StrictHostKeyChecking=no Administrator@$WindowsIP `"Restart-Service W32Time; Write-Host 'Service restarted OK'`""
 
-echo $LibreNMSPassword | & ssh -o StrictHostKeyChecking=no `
-    "$LibreNMSUser@$LibreNMSIP" `
-    "echo '$scriptContent' | sudo tee /opt/librenms/scripts/restart_w32time_client.sh > /dev/null && sudo chmod +x /opt/librenms/scripts/restart_w32time_client.sh && sudo chown librenms:librenms /opt/librenms/scripts/restart_w32time_client.sh" 2>&1 | Out-Null
+Invoke-LibreNMSSSH "echo '$scriptContent' | sudo tee /opt/librenms/scripts/restart_w32time_client.sh > /dev/null && sudo chmod +x /opt/librenms/scripts/restart_w32time_client.sh && sudo chown librenms:librenms /opt/librenms/scripts/restart_w32time_client.sh" | Out-Null
 
 Write-OK "Script de restart créé"
 
@@ -222,53 +198,35 @@ Write-OK "Script de restart créé"
 Write-Step "Configuration de LibreNMS (transport, opération, rule)"
 
 # Vérifier si le transport existe déjà
-$checkTransport = echo $LibreNMSPassword | & ssh -o StrictHostKeyChecking=no `
-    "$LibreNMSUser@$LibreNMSIP" `
-    "sudo mysql -u librenms -p$MySQLPassword librenms -e ""SELECT COUNT(*) FROM alert_transports WHERE transport_name='Restart W32Time';"" -s -N 2>/dev/null" 2>&1
+$checkTransport = Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""SELECT COUNT(*) FROM alert_transports WHERE transport_name='Restart W32Time';"" -s -N 2>/dev/null"
 
 if ($checkTransport -eq "0") {
     # Créer le transport
-    echo $LibreNMSPassword | & ssh -o StrictHostKeyChecking=no `
-        "$LibreNMSUser@$LibreNMSIP" `
-        "sudo mysql -u librenms -p$MySQLPassword librenms -e ""INSERT INTO alert_transports (transport_name, transport_type, transport_config) VALUES ('Restart W32Time', 'program', '{\\\"program\\\":\\\"/opt/librenms/scripts/restart_w32time_client.sh\\\"}');"" 2>/dev/null" 2>&1 | Out-Null
+    Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""INSERT INTO alert_transports (transport_name, transport_type, transport_config) VALUES ('Restart W32Time', 'program', '{\\\"program\\\":\\\"/opt/librenms/scripts/restart_w32time_client.sh\\\"}');"" 2>/dev/null" | Out-Null
 
     # Récupérer transport_id
-    $transportId = echo $LibreNMSPassword | & ssh -o StrictHostKeyChecking=no `
-        "$LibreNMSUser@$LibreNMSIP" `
-        "sudo mysql -u librenms -p$MySQLPassword librenms -e ""SELECT transport_id FROM alert_transports WHERE transport_name='Restart W32Time';"" -s -N 2>/dev/null" 2>&1
+    $transportId = Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""SELECT transport_id FROM alert_transports WHERE transport_name='Restart W32Time';"" -s -N 2>/dev/null"
 
     # Créer l'opération
-    echo $LibreNMSPassword | & ssh -o StrictHostKeyChecking=no `
-        "$LibreNMSUser@$LibreNMSIP" `
-        "sudo mysql -u librenms -p$MySQLPassword librenms -e ""INSERT INTO alert_operations (name, default_operation_step_duration_seconds, notifications_suppressed) VALUES ('Restart W32Time', 0, 0);"" 2>/dev/null" 2>&1 | Out-Null
+    Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""INSERT INTO alert_operations (name, default_operation_step_duration_seconds, notifications_suppressed) VALUES ('Restart W32Time', 0, 0);"" 2>/dev/null" | Out-Null
 
     # Récupérer operation_id
-    $operationId = echo $LibreNMSPassword | & ssh -o StrictHostKeyChecking=no `
-        "$LibreNMSUser@$LibreNMSIP" `
-        "sudo mysql -u librenms -p$MySQLPassword librenms -e ""SELECT id FROM alert_operations WHERE name='Restart W32Time';"" -s -N 2>/dev/null" 2>&1
+    $operationId = Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""SELECT id FROM alert_operations WHERE name='Restart W32Time';"" -s -N 2>/dev/null"
 
     # Créer le segment
-    echo $LibreNMSPassword | & ssh -o StrictHostKeyChecking=no `
-        "$LibreNMSUser@$LibreNMSIP" `
-        "sudo mysql -u librenms -p$MySQLPassword librenms -e ""INSERT INTO alert_operation_segments (alert_operation_id, position, operation_phase, escalation_step_from, escalation_step_to, start_in_seconds, step_duration_seconds) VALUES ($operationId, 0, 'problem', 1, NULL, 0, 0);"" 2>/dev/null" 2>&1 | Out-Null
+    Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""INSERT INTO alert_operation_segments (alert_operation_id, position, operation_phase, escalation_step_from, escalation_step_to, start_in_seconds, step_duration_seconds) VALUES ($operationId, 0, 'problem', 1, NULL, 0, 0);"" 2>/dev/null" | Out-Null
 
     # Récupérer segment_id
-    $segmentId = echo $LibreNMSPassword | & ssh -o StrictHostKeyChecking=no `
-        "$LibreNMSUser@$LibreNMSIP" `
-        "sudo mysql -u librenms -p$MySQLPassword librenms -e ""SELECT id FROM alert_operation_segments WHERE alert_operation_id=$operationId;"" -s -N 2>/dev/null" 2>&1
+    $segmentId = Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""SELECT id FROM alert_operation_segments WHERE alert_operation_id=$operationId;"" -s -N 2>/dev/null"
 
     # Lier segment au transport
-    echo $LibreNMSPassword | & ssh -o StrictHostKeyChecking=no `
-        "$LibreNMSUser@$LibreNMSIP" `
-        "sudo mysql -u librenms -p$MySQLPassword librenms -e ""INSERT INTO alert_operation_transport_map (segment_id, transport_or_group_id, target_type) VALUES ($segmentId, $transportId, 'single');"" 2>/dev/null" 2>&1 | Out-Null
+    Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""INSERT INTO alert_operation_transport_map (segment_id, transport_or_group_id, target_type) VALUES ($segmentId, $transportId, 'single');"" 2>/dev/null" | Out-Null
 
     # Créer la rule
     $builder = '{\"condition\":\"AND\",\"rules\":[{\"id\":\"services.service_status\",\"field\":\"services.service_status\",\"type\":\"string\",\"input\":\"text\",\"operator\":\"not_equal\",\"value\":\"0\"},{\"id\":\"macros.device_up\",\"field\":\"macros.device_up\",\"type\":\"integer\",\"input\":\"radio\",\"operator\":\"equal\",\"value\":\"1\"}],\"valid\":true}'
     $query = 'SELECT * FROM devices,services WHERE (devices.device_id = ? AND devices.device_id = services.device_id) AND services.service_status != 0 AND (devices.status = 1 && (devices.disabled = 0 && devices.ignore = 0)) = 1'
 
-    echo $LibreNMSPassword | & ssh -o StrictHostKeyChecking=no `
-        "$LibreNMSUser@$LibreNMSIP" `
-        "sudo mysql -u librenms -p$MySQLPassword librenms -e ""INSERT INTO alert_rules (severity, extra, disabled, name, query, builder, alert_operation_id) VALUES ('critical', '{\\\"mute\\\":false,\\\"count\\\":-1,\\\"delay\\\":0,\\\"invert\\\":false,\\\"interval\\\":0}', 0, 'W32Time Service Down', '$query', '$builder', $operationId);"" 2>/dev/null" 2>&1 | Out-Null
+    Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""INSERT INTO alert_rules (severity, extra, disabled, name, query, builder, alert_operation_id) VALUES ('critical', '{\\\"mute\\\":false,\\\"count\\\":-1,\\\"delay\\\":0,\\\"invert\\\":false,\\\"interval\\\":0}', 0, 'W32Time Service Down', '$query', '$builder', $operationId);"" 2>/dev/null" | Out-Null
 
     Write-OK "Transport, opération, segment et rule créés (transport_id=$transportId, operation_id=$operationId)"
 } else {
@@ -281,20 +239,14 @@ if ($checkTransport -eq "0") {
 
 Write-Step "Ajout du service NTP dans LibreNMS"
 
-$checkService = echo $LibreNMSPassword | & ssh -o StrictHostKeyChecking=no `
-    "$LibreNMSUser@$LibreNMSIP" `
-    "sudo mysql -u librenms -p$MySQLPassword librenms -e ""SELECT COUNT(*) FROM services WHERE service_ip='$WindowsIP' AND service_type='ntp_time';"" -s -N 2>/dev/null" 2>&1
+$checkService = Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""SELECT COUNT(*) FROM services WHERE service_ip='$WindowsIP' AND service_type='ntp_time';"" -s -N 2>/dev/null"
 
 if ($checkService -eq "0") {
     # Récupérer device_id
-    $deviceId = echo $LibreNMSPassword | & ssh -o StrictHostKeyChecking=no `
-        "$LibreNMSUser@$LibreNMSIP" `
-        "sudo mysql -u librenms -p$MySQLPassword librenms -e ""SELECT device_id FROM devices WHERE hostname='$WindowsIP';"" -s -N 2>/dev/null" 2>&1
+    $deviceId = Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""SELECT device_id FROM devices WHERE hostname='$WindowsIP';"" -s -N 2>/dev/null"
 
     if ($deviceId) {
-        echo $LibreNMSPassword | & ssh -o StrictHostKeyChecking=no `
-            "$LibreNMSUser@$LibreNMSIP" `
-            "sudo mysql -u librenms -p$MySQLPassword librenms -e ""INSERT INTO services (device_id, service_ip, service_type, service_desc, service_param, service_name) VALUES ($deviceId, '$WindowsIP', 'ntp_time', 'Windows NTP Service', '-w 0.5 -c 1', 'W32Time_Service');"" 2>/dev/null" 2>&1 | Out-Null
+        Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""INSERT INTO services (device_id, service_ip, service_type, service_desc, service_param, service_name) VALUES ($deviceId, '$WindowsIP', 'ntp_time', 'Windows NTP Service', '-w 0.5 -c 1', 'W32Time_Service');"" 2>/dev/null" | Out-Null
         Write-OK "Service W32Time_Service ajouté dans LibreNMS"
     } else {
         Write-Host "  [WARN] Device $WindowsIP non trouvé dans LibreNMS, ajout du service ignoré" -ForegroundColor Yellow
