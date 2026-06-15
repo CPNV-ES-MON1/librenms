@@ -19,40 +19,8 @@ error()   { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 # =============================================================================
 # VARIABLES FIXES
 # =============================================================================
-# Détection automatique du data storage
-# Méthode robuste compatible avec tous types de disques (sda, nvme, vda, xvd...)
-# 1. Trouve le disque parent de la partition racine /
-# 2. Exclut ce disque OS et prend le premier autre disque disponible
-# 3. Exclut aussi les disques qui ont des partitions montées (disques en cours d'utilisation)
 
-# Trouver le device de la partition racine (ex: /dev/sda1, /dev/nvme0n1p1)
-ROOT_DEVICE=$(findmnt -n -o SOURCE / 2>/dev/null)
-
-# Trouver le disque parent (ex: sda1 -> sda, nvme0n1p1 -> nvme0n1)
-OS_DISK=$(lsblk -ndo PKNAME "$ROOT_DEVICE" 2>/dev/null)
-# Si PKNAME est vide (disque sans partition), prend le nom du device directement
-if [ -z "$OS_DISK" ]; then
-  OS_DISK=$(basename "$ROOT_DEVICE")
-fi
-
-# Trouver tous les disques disponibles
-# Exclure : le disque OS, les disques avec des partitions montées
-DATA_DISK=""
-for DISK in $(lsblk -ndo NAME,TYPE | awk '$2=="disk" {print $1}'); do
-  # Ignorer le disque OS
-  [ "$DISK" = "$OS_DISK" ] && continue
-
-  # Vérifier si ce disque ou ses partitions sont montés
-  MOUNTED=$(lsblk -ndo MOUNTPOINT "/dev/${DISK}" 2>/dev/null)
-  PARTS_MOUNTED=$(lsblk -nlo MOUNTPOINT "/dev/${DISK}" 2>/dev/null | grep -v "^$" | wc -l)
-
-  if [ -z "$MOUNTED" ] && [ "$PARTS_MOUNTED" -eq 0 ]; then
-    DATA_DISK="/dev/${DISK}"
-    break
-  fi
-done
 DATA_MOUNT="/data"
-
 DB_NAME="librenms"
 DB_USER="librenms"
 SNMP_COMMUNITY="public"
@@ -114,17 +82,40 @@ sleep 1
 #    Détection automatique du second disque (sdb, nvme1n1, etc.)
 #    Tout /opt/librenms sera sur ce disque via un lien symbolique
 # =============================================================================
-info "Vérification du data storage (${DATA_DISK})..."
-
-if ! lsblk "${DATA_DISK}" &>/dev/null; then
-  error "Le disque ${DATA_DISK} est introuvable. Vérifiez que le data storage est bien connecté."
-fi
-
-# Vérifier si le data disk est déjà monté sur /data
+# Si /data est déjà monté (ex: disque AWS pré-attaché), on ne touche à rien
 if mountpoint -q "${DATA_MOUNT}"; then
-  success "${DATA_MOUNT} est déjà monté."
+  success "${DATA_MOUNT} est déjà monté, utilisation telle quelle."
 else
-  info "${DATA_DISK} non monté, formatage et montage sur ${DATA_MOUNT}..."
+  info "${DATA_MOUNT} non monté, détection du disque data disponible..."
+
+  # Trouver le device de la partition racine (ex: /dev/sda1, /dev/nvme0n1p1)
+  ROOT_DEVICE=$(findmnt -n -o SOURCE / 2>/dev/null)
+
+  # Trouver le disque parent (ex: sda1 -> sda, nvme0n1p1 -> nvme0n1)
+  OS_DISK=$(lsblk -ndo PKNAME "$ROOT_DEVICE" 2>/dev/null)
+  if [ -z "$OS_DISK" ]; then
+    OS_DISK=$(basename "$ROOT_DEVICE")
+  fi
+
+  # Parcourir tous les disques et prendre le premier libre (pas l'OS, sans montage)
+  DATA_DISK=""
+  for DISK in $(lsblk -ndo NAME,TYPE | awk '$2=="disk" {print $1}'); do
+    [ "$DISK" = "$OS_DISK" ] && continue
+
+    MOUNTED=$(lsblk -ndo MOUNTPOINT "/dev/${DISK}" 2>/dev/null)
+    PARTS_MOUNTED=$(lsblk -nlo MOUNTPOINT "/dev/${DISK}" 2>/dev/null | grep -v "^$" | wc -l)
+
+    if [ -z "$MOUNTED" ] && [ "$PARTS_MOUNTED" -eq 0 ]; then
+      DATA_DISK="/dev/${DISK}"
+      break
+    fi
+  done
+
+  if [ -z "$DATA_DISK" ]; then
+    error "Aucun disque data disponible trouvé (en plus du disque OS ${OS_DISK}). Vérifiez que le data storage est bien attaché."
+  fi
+
+  info "Disque data détecté : ${DATA_DISK}"
 
   # Vérifier si le disque a déjà une partition/filesystem
   FS_TYPE=$(blkid -o value -s TYPE "${DATA_DISK}" 2>/dev/null || echo "")
