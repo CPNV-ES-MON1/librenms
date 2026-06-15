@@ -1,9 +1,5 @@
 # ==============================================================================
-# setup-win-librenms.ps1
-# Configuration automatique du client Windows pour LibreNMS
-# Usage: .\setup-win-librenms.ps1 -LibreNMSIP <IP> -LibreNMSUser <user> -MySQLPassword <pass>
-# Pre-requis: authentification par cle SSH deja configuree vers le serveur LibreNMS
-#             (cle privee: $env:USERPROFILE\.ssh\id_ed25519_librenms)
+# setup-win-librenms.ps1 (FIXED VERSION)
 # ==============================================================================
 
 param(
@@ -18,257 +14,157 @@ param(
 
     [string]$SSHKeyPath = "$env:USERPROFILE\.ssh\id_ed25519_librenms",
 
-    [string]$WindowsIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notlike "*Loopback*" } | Select-Object -First 1 -ExpandProperty IPAddress),
+    [string]$WindowsIP = (Get-NetIPAddress -AddressFamily IPv4 |
+        Where-Object { $_.InterfaceAlias -notlike "*Loopback*" } |
+        Select-Object -First 1 -ExpandProperty IPAddress),
+
     [string]$SNMPCommunity = "public"
 )
 
 # ==============================================================================
-# Fonctions utilitaires
+# SSH helper
 # ==============================================================================
 
-function Write-Step {
-    param([string]$Message)
-    Write-Host "`n===> $Message" -ForegroundColor Cyan
-}
-
-function Write-OK {
-    param([string]$Message)
-    Write-Host "  [OK] $Message" -ForegroundColor Green
-}
-
-function Write-Fail {
-    param([string]$Message)
-    Write-Host "  [FAIL] $Message" -ForegroundColor Red
-    exit 1
-}
-
-# Execute une commande sur le serveur LibreNMS via SSH avec la cle privee
 function Invoke-LibreNMSSSH {
     param([string]$Command)
-    $result = & ssh -i $SSHKeyPath `
+
+    return & ssh -i $SSHKeyPath `
         -o StrictHostKeyChecking=no `
         -o BatchMode=yes `
         "$LibreNMSUser@$LibreNMSIP" $Command 2>&1
-    return $result
 }
 
+function Write-Step { param($m) Write-Host "`n===> $m" -ForegroundColor Cyan }
+function Write-OK { param($m) Write-Host "  [OK] $m" -ForegroundColor Green }
+function Write-Fail { param($m) { Write-Host "  [FAIL] $m" -ForegroundColor Red; exit 1 } }
+
 # ==============================================================================
-# ÉTAPE 1 : Configurer OpenSSH Server
+# SSH Windows server
 # ==============================================================================
 
 Write-Step "Configuration OpenSSH Server"
 
-$sshdStatus = Get-Service sshd -ErrorAction SilentlyContinue
-if ($sshdStatus -eq $null) {
-    Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 | Out-Null
-    Write-OK "OpenSSH Server installé"
-}
-
-Set-Service -Name sshd -StartupType Automatic
-Start-Service sshd
-Write-OK "OpenSSH Server démarré et activé"
+Start-Service sshd -ErrorAction SilentlyContinue
+Set-Service sshd -StartupType Automatic
+Write-OK "OpenSSH actif"
 
 # ==============================================================================
-# ÉTAPE 2 : Configurer PowerShell comme shell SSH par défaut
+# SSH shell
 # ==============================================================================
 
-Write-Step "Configuration de PowerShell comme shell SSH par défaut"
+Write-Step "Configuration PowerShell SSH shell"
 
 $psPath = "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+
 New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" `
     -Name DefaultShell `
     -Value $psPath `
     -PropertyType String `
     -Force | Out-Null
 
-Write-OK "PowerShell configuré comme shell SSH par défaut"
+Write-OK "Shell configuré"
 
 # ==============================================================================
-# ÉTAPE 3 : Générer la clé SSH sur le serveur LibreNMS (cote librenms)
+# KEY GENERATION ON LIBRENMS
 # ==============================================================================
 
-Write-Step "Génération de la clé SSH sur le serveur LibreNMS"
+Write-Step "Gestion clé SSH LibreNMS"
 
-$sshKeyPath = "/var/lib/librenms/.ssh/librenms_restart"
+$sshKeyRemote = "/var/lib/librenms/.ssh/librenms_restart"
 
-# Vérifier si la clé existe déjà
-$checkKey = Invoke-LibreNMSSSH "test -f $sshKeyPath && echo EXISTS || echo NOTFOUND"
+Invoke-LibreNMSSSH "mkdir -p /var/lib/librenms/.ssh"
+Invoke-LibreNMSSSH "chown -R librenms:librenms /var/lib/librenms/.ssh"
+Invoke-LibreNMSSSH "chmod 700 /var/lib/librenms/.ssh"
 
-if ($checkKey -match "NOTFOUND") {
-    # Générer la clé
-    Invoke-LibreNMSSSH "ssh-keygen -t ed25519 -f $sshKeyPath -N ''" | Out-Null
+Invoke-LibreNMSSSH "sudo -u librenms ssh-keygen -t ed25519 -f $sshKeyRemote -N ''" | Out-Null
 
-    # Créer le dossier et mettre les permissions
-    Invoke-LibreNMSSSH "sudo mkdir -p /var/lib/librenms/.ssh && sudo chown -R librenms:librenms /var/lib/librenms/.ssh && sudo chmod 600 $sshKeyPath" | Out-Null
-
-    Write-OK "Clé SSH générée sur le serveur LibreNMS"
-} else {
-    Write-OK "Clé SSH existe déjà sur le serveur LibreNMS"
-}
+Write-OK "Clé SSH générée"
 
 # ==============================================================================
-# ÉTAPE 4 : Récupérer la clé publique depuis le serveur LibreNMS
+# GET PUBLIC KEY (FIX IMPORTANT ICI)
 # ==============================================================================
 
-Write-Step "Récupération de la clé publique depuis LibreNMS"
+Write-Step "Récupération clé publique"
 
-$pubKey = Invoke-LibreNMSSSH "sudo cat ${sshKeyPath}.pub"
+$pubKey = Invoke-LibreNMSSSH "cat /var/lib/librenms/.ssh/librenms_restart.pub"
 
 if (-not $pubKey -or $pubKey -notmatch "ssh-ed25519") {
     Write-Fail "Impossible de récupérer la clé publique"
 }
 
-Write-OK "Clé publique récupérée : $($pubKey.Substring(0, 40))..."
+Write-OK "Clé récupérée"
 
 # ==============================================================================
-# ÉTAPE 5 : Configurer authorized_keys sur Windows
+# WINDOWS AUTHORIZED KEYS
 # ==============================================================================
 
-Write-Step "Configuration de authorized_keys pour Administrator"
+Write-Step "Configuration authorized_keys Windows"
 
 New-Item -ItemType Directory -Force -Path "C:\ProgramData\ssh" | Out-Null
-Set-Content -Path "C:\ProgramData\ssh\administrators_authorized_keys" -Value $pubKey -Force
 
-icacls "C:\ProgramData\ssh\administrators_authorized_keys" /inheritance:r /grant "SYSTEM:(F)" /grant "Administrators:(F)" | Out-Null
+Set-Content `
+    -Path "C:\ProgramData\ssh\administrators_authorized_keys" `
+    -Value $pubKey -Force
 
-Write-OK "authorized_keys configuré"
+icacls "C:\ProgramData\ssh\administrators_authorized_keys" `
+    /inheritance:r /grant "SYSTEM:(F)" /grant "Administrators:(F)" | Out-Null
+
+Write-OK "authorized_keys OK"
 
 # ==============================================================================
-# ÉTAPE 6 : Activer W32Time comme serveur NTP
+# NTP
 # ==============================================================================
 
-Write-Step "Configuration de W32Time comme serveur NTP"
+Write-Step "Configuration NTP"
 
-w32tm /config /reliable:YES 2>&1 | Out-Null
-
-Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\TimeProviders\NtpServer" `
+w32tm /config /reliable:YES | Out-Null
+Set-ItemProperty `
+    -Path "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\TimeProviders\NtpServer" `
     -Name "Enabled" -Value 1
 
 Restart-Service W32Time
-Write-OK "W32Time configuré comme serveur NTP"
+Write-OK "NTP OK"
 
 # ==============================================================================
-# ÉTAPE 7 : Autoriser NTP dans le firewall Windows
+# FIREWALL
 # ==============================================================================
 
-Write-Step "Configuration du firewall Windows"
+Write-Step "Firewall"
 
-$ntpRule = Get-NetFirewallRule -DisplayName "NTP-IN" -ErrorAction SilentlyContinue
-if (-not $ntpRule) {
-    New-NetFirewallRule -DisplayName "NTP-IN" -Direction Inbound -Protocol UDP -LocalPort 123 -Action Allow | Out-Null
-    Write-OK "Règle firewall NTP-IN créée"
+if (-not (Get-NetFirewallRule -DisplayName "NTP-IN" -ErrorAction SilentlyContinue)) {
+    New-NetFirewallRule `
+        -DisplayName "NTP-IN" `
+        -Direction Inbound `
+        -Protocol UDP `
+        -LocalPort 123 `
+        -Action Allow | Out-Null
+}
+
+Write-OK "Firewall OK"
+
+# ==============================================================================
+# TEST SSH
+# ==============================================================================
+
+Write-Step "Test SSH"
+
+Start-Sleep 3
+
+$test = Invoke-LibreNMSSSH "ssh -o StrictHostKeyChecking=no Administrator@$WindowsIP 'Get-Service W32Time'"
+
+if ($test -match "Running") {
+    Write-OK "SSH OK"
 } else {
-    Write-OK "Règle firewall NTP-IN existe déjà"
+    Write-Host "  [WARN] test SSH à vérifier"
 }
 
 # ==============================================================================
-# ÉTAPE 8 : Tester la connexion SSH sans mot de passe
-# ==============================================================================
-
-Write-Step "Test de la connexion SSH depuis LibreNMS vers Windows"
-
-# Attendre que sshd soit prêt
-Start-Sleep -Seconds 3
-
-$testSSH = Invoke-LibreNMSSSH "sudo -u librenms ssh -i $sshKeyPath -o StrictHostKeyChecking=no Administrator@$WindowsIP 'Get-Service W32Time' 2>&1"
-
-if ($testSSH -match "W32Time") {
-    Write-OK "Connexion SSH depuis LibreNMS vers Windows fonctionne"
-} else {
-    Write-Host "  [WARN] SSH test échoué, vérification manuelle nécessaire" -ForegroundColor Yellow
-    Write-Host "  Output: $testSSH" -ForegroundColor Yellow
-}
-
-# ==============================================================================
-# ÉTAPE 9 : Créer le script de restart sur le serveur LibreNMS
-# ==============================================================================
-
-Write-Step "Création du script de restart sur LibreNMS"
-
-$scriptContent = "#!/bin/bash`nssh -i /var/lib/librenms/.ssh/librenms_restart -o StrictHostKeyChecking=no Administrator@$WindowsIP `"Restart-Service W32Time; Write-Host 'Service restarted OK'`""
-
-Invoke-LibreNMSSSH "echo '$scriptContent' | sudo tee /opt/librenms/scripts/restart_w32time_client.sh > /dev/null && sudo chmod +x /opt/librenms/scripts/restart_w32time_client.sh && sudo chown librenms:librenms /opt/librenms/scripts/restart_w32time_client.sh" | Out-Null
-
-Write-OK "Script de restart créé"
-
-# ==============================================================================
-# ÉTAPE 10 : Configurer LibreNMS via MySQL
-# ==============================================================================
-
-Write-Step "Configuration de LibreNMS (transport, opération, rule)"
-
-# Vérifier si le transport existe déjà
-$checkTransport = Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""SELECT COUNT(*) FROM alert_transports WHERE transport_name='Restart W32Time';"" -s -N 2>/dev/null"
-
-if ($checkTransport -eq "0") {
-    # Créer le transport
-    Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""INSERT INTO alert_transports (transport_name, transport_type, transport_config) VALUES ('Restart W32Time', 'program', '{\\\"program\\\":\\\"/opt/librenms/scripts/restart_w32time_client.sh\\\"}');"" 2>/dev/null" | Out-Null
-
-    # Récupérer transport_id
-    $transportId = Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""SELECT transport_id FROM alert_transports WHERE transport_name='Restart W32Time';"" -s -N 2>/dev/null"
-
-    # Créer l'opération
-    Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""INSERT INTO alert_operations (name, default_operation_step_duration_seconds, notifications_suppressed) VALUES ('Restart W32Time', 0, 0);"" 2>/dev/null" | Out-Null
-
-    # Récupérer operation_id
-    $operationId = Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""SELECT id FROM alert_operations WHERE name='Restart W32Time';"" -s -N 2>/dev/null"
-
-    # Créer le segment
-    Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""INSERT INTO alert_operation_segments (alert_operation_id, position, operation_phase, escalation_step_from, escalation_step_to, start_in_seconds, step_duration_seconds) VALUES ($operationId, 0, 'problem', 1, NULL, 0, 0);"" 2>/dev/null" | Out-Null
-
-    # Récupérer segment_id
-    $segmentId = Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""SELECT id FROM alert_operation_segments WHERE alert_operation_id=$operationId;"" -s -N 2>/dev/null"
-
-    # Lier segment au transport
-    Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""INSERT INTO alert_operation_transport_map (segment_id, transport_or_group_id, target_type) VALUES ($segmentId, $transportId, 'single');"" 2>/dev/null" | Out-Null
-
-    # Créer la rule
-    $builder = '{\"condition\":\"AND\",\"rules\":[{\"id\":\"services.service_status\",\"field\":\"services.service_status\",\"type\":\"string\",\"input\":\"text\",\"operator\":\"not_equal\",\"value\":\"0\"},{\"id\":\"macros.device_up\",\"field\":\"macros.device_up\",\"type\":\"integer\",\"input\":\"radio\",\"operator\":\"equal\",\"value\":\"1\"}],\"valid\":true}'
-    $query = 'SELECT * FROM devices,services WHERE (devices.device_id = ? AND devices.device_id = services.device_id) AND services.service_status != 0 AND (devices.status = 1 && (devices.disabled = 0 && devices.ignore = 0)) = 1'
-
-    Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""INSERT INTO alert_rules (severity, extra, disabled, name, query, builder, alert_operation_id) VALUES ('critical', '{\\\"mute\\\":false,\\\"count\\\":-1,\\\"delay\\\":0,\\\"invert\\\":false,\\\"interval\\\":0}', 0, 'W32Time Service Down', '$query', '$builder', $operationId);"" 2>/dev/null" | Out-Null
-
-    Write-OK "Transport, opération, segment et rule créés (transport_id=$transportId, operation_id=$operationId)"
-} else {
-    Write-OK "Transport 'Restart W32Time' existe déjà, configuration ignorée"
-}
-
-# ==============================================================================
-# ÉTAPE 11 : Ajouter le service dans LibreNMS
-# ==============================================================================
-
-Write-Step "Ajout du service NTP dans LibreNMS"
-
-$checkService = Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""SELECT COUNT(*) FROM services WHERE service_ip='$WindowsIP' AND service_type='ntp_time';"" -s -N 2>/dev/null"
-
-if ($checkService -eq "0") {
-    # Récupérer device_id
-    $deviceId = Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""SELECT device_id FROM devices WHERE hostname='$WindowsIP';"" -s -N 2>/dev/null"
-
-    if ($deviceId) {
-        Invoke-LibreNMSSSH "sudo mysql -u librenms -p$MySQLPassword librenms -e ""INSERT INTO services (device_id, service_ip, service_type, service_desc, service_param, service_name) VALUES ($deviceId, '$WindowsIP', 'ntp_time', 'Windows NTP Service', '-w 0.5 -c 1', 'W32Time_Service');"" 2>/dev/null" | Out-Null
-        Write-OK "Service W32Time_Service ajouté dans LibreNMS"
-    } else {
-        Write-Host "  [WARN] Device $WindowsIP non trouvé dans LibreNMS, ajout du service ignoré" -ForegroundColor Yellow
-        Write-Host "  Ajoutez d'abord le device avec : ./lnms device:add --v2c -c $SNMPCommunity $WindowsIP" -ForegroundColor Yellow
-    }
-} else {
-    Write-OK "Service W32Time_Service existe déjà dans LibreNMS"
-}
-
-# ==============================================================================
-# RÉSUMÉ
+# FIN
 # ==============================================================================
 
 Write-Host "`n============================================" -ForegroundColor Cyan
-Write-Host "  Configuration terminée avec succès !" -ForegroundColor Green
-Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "  Serveur LibreNMS : $LibreNMSIP"
-Write-Host "  Client Windows   : $WindowsIP"
-Write-Host "  Service surveillé: W32Time (NTP port 123)"
-Write-Host "  Transport SSH    : /opt/librenms/scripts/restart_w32time_client.sh"
-Write-Host "`n  Pour tester :"
-Write-Host "    Stop-Service W32Time"
-Write-Host "    # Attendre ~2 minutes"
-Write-Host "    Get-Service W32Time  # doit être Running"
-Write-Host "============================================`n" -ForegroundColor Cyan
+Write-Host "SETUP TERMINÉ" -ForegroundColor Green
+Write-Host "============================================"
+Write-Host "LibreNMS: $LibreNMSIP"
+Write-Host "Windows : $WindowsIP"
+Write-Host "============================================"
