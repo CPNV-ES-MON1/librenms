@@ -6,9 +6,9 @@
 #
 # Usage:
 #   sudo bash setup-win-librenms.sh \
-#     --win-ip 10.229.37.250 \
-#     --win-password 'Pa$$w0rd' \
-#     --mysql-password 'Pa$$w0rd'
+#     --win-ip "ip du client windows" \
+#     --win-password 'mot de passe' \
+#     --mysql-password 'mot de passe'
 # ==============================================================================
 
 set -e
@@ -20,7 +20,7 @@ WIN_IP=""
 WIN_USER="Administrator"
 WIN_PASSWORD=""
 MYSQL_PASSWORD=""
-LIBRENMS_IP="10.229.37.249"
+LIBRENMS_IP="10.0.2.10"
 SNMP_COMMUNITY="public"
 SSH_KEY_PATH="/var/lib/librenms/.ssh/librenms_restart"
 SCRIPT_PATH="/opt/librenms/scripts/restart_w32time_client.sh"
