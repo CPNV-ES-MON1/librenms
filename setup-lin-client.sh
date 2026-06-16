@@ -5,7 +5,7 @@
 # A executer UNE SEULE FOIS directement sur le client Linux
 #
 # Usage:
-#   sudo bash setup-lin-client.sh --librenms-ip 10.229.37.249 --snmp-community public
+#   sudo bash setup-lin-client.sh --librenms-ip Ip serveur librenms --snmp-community public
 # ==============================================================================
 
 set -e
@@ -46,37 +46,29 @@ apt-get update -qq
 apt-get install -y snmpd 2>/dev/null
 ok "snmpd installé"
 
-# Configurer la communauté SNMP
-sed -i "s|^rocommunity.*|rocommunity $SNMP_COMMUNITY $LIBRENMS_IP|" /etc/snmp/snmpd.conf
-if ! grep -q "rocommunity $SNMP_COMMUNITY" /etc/snmp/snmpd.conf; then
-    echo "rocommunity $SNMP_COMMUNITY $LIBRENMS_IP" >> /etc/snmp/snmpd.conf
-fi
+# Réécriture propre de snmpd.conf compatible snmpd 5.9.x (Debian Trixie)
+cat > /etc/snmp/snmpd.conf << EOF
+# Écouter sur toutes les interfaces UDP port 161
+agentaddress udp:161
 
-# Écouter sur toutes les interfaces
-sed -i 's|^agentAddress.*|agentAddress udp:161|' /etc/snmp/snmpd.conf
-if ! grep -q "^agentAddress" /etc/snmp/snmpd.conf; then
-    echo "agentAddress udp:161" >> /etc/snmp/snmpd.conf
-fi
+# Accès en lecture seule depuis le serveur LibreNMS uniquement
+rocommunity $SNMP_COMMUNITY $LIBRENMS_IP
+
+# Informations système
+sysLocation Datacenter
+sysContact Admin
+
+# Activer le sous-agent AgentX
+master agentx
+EOF
 
 systemctl enable snmpd
 systemctl restart snmpd
 ok "SNMP configuré avec la communauté '$SNMP_COMMUNITY' pour $LIBRENMS_IP"
-
-# ==============================================================================
-# ÉTAPE 2 : Configurer sysLocation
-# ==============================================================================
-step "Configuration de sysLocation SNMP"
-
-if ! grep -q "^sysLocation" /etc/snmp/snmpd.conf; then
-    echo "sysLocation Datacenter" >> /etc/snmp/snmpd.conf
-else
-    sed -i 's|^sysLocation.*|sysLocation Datacenter|' /etc/snmp/snmpd.conf
-fi
-systemctl restart snmpd
 ok "sysLocation configuré à 'Datacenter'"
 
 # ==============================================================================
-# ÉTAPE 3 : Installer l'agent Check_MK
+# ÉTAPE 2 : Installer l'agent Check_MK
 # ==============================================================================
 step "Installation de l'agent Check_MK"
 
@@ -122,7 +114,7 @@ else
 fi
 
 # ==============================================================================
-# ÉTAPE 4 : Installer ntpsec comme serveur NTP
+# ÉTAPE 3 : Installer ntpsec comme serveur NTP
 # ==============================================================================
 step "Installation et configuration de ntpsec"
 
@@ -132,7 +124,7 @@ systemctl start ntpsec
 ok "ntpsec installé et démarré"
 
 # ==============================================================================
-# ÉTAPE 5 : Configurer sudoers pour restart ntpsec sans mot de passe
+# ÉTAPE 4 : Configurer sudoers pour restart ntpsec sans mot de passe
 # ==============================================================================
 step "Configuration sudoers pour restart ntpsec"
 
@@ -146,7 +138,7 @@ else
 fi
 
 # ==============================================================================
-# ÉTAPE 6 : Autoriser les ports dans le firewall (si ufw actif)
+# ÉTAPE 5 : Autoriser les ports dans le firewall (si ufw actif)
 # ==============================================================================
 step "Configuration du firewall"
 
