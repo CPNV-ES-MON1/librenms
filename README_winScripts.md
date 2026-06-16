@@ -1,6 +1,14 @@
 Déploiement du Script
 Script d'installation et de configuration du client Windows.
 
+Installer git pour cloner le dêpot via powershell :
+```
+winget install --id Git.Git -e --source winget
+```
+Clôner le dêpot ensuite via le cmd git :
+```
+git clone https://github.com/CPNV-ES-MON1/librenms.git
+```
 Tout d'abbord il faut executer le script .ps1 sur le client Windows pour préparer le client avec ses règles firewall et les services nécessaires :
 ```
 .\setup-win-librenms.ps1 -LibreNMSIP "IP du serveur LibreNMS" -SNMPCommunity public
