@@ -5,9 +5,10 @@ Installer git pour cloner le dêpot via powershell :
 ```
 winget install --id Git.Git -e --source winget
 ```
-Clôner le dêpot ensuite via le cmd git :
+Clôner le dêpot ensuite via le cmd git et prendre la branch develop :
 ```
 git clone https://github.com/CPNV-ES-MON1/librenms.git
+git checkout -b develop origin/develop
 ```
 Tout d'abbord il faut executer le script .ps1 sur le client Windows pour préparer le client avec ses règles firewall et les services nécessaires :
 ```
