@@ -65,7 +65,7 @@ ssh_win() {
     sshpass -p "$WIN_PASSWORD" ssh \
         -o StrictHostKeyChecking=no \
         -o PasswordAuthentication=yes \
-        -o ConnectTimeout=10 \
+        -o ConnectTimeout=30 \
         "$WIN_USER@$WIN_IP" "$1" 2>/dev/null
 }
 
@@ -165,10 +165,10 @@ step "Configuration du firewall Windows (port 123 UDP)"
 RULE_EXISTS=$(ssh_win "powershell -Command \"
 \$r = Get-NetFirewallRule -DisplayName 'NTP-IN' -ErrorAction SilentlyContinue;
 if (\$r) { 'EXISTS' } else { 'NOTFOUND' }
-\"")
+\"") || true
 
-if [[ "$RULE_EXISTS" == *"NOTFOUND"* ]]; then
-    ssh_win "powershell -Command \"New-NetFirewallRule -DisplayName 'NTP-IN' -Direction Inbound -Protocol UDP -LocalPort 123 -Action Allow | Out-Null\""
+if [[ "$RULE_EXISTS" == *"NOTFOUND"* ]] || [[ -z "$RULE_EXISTS" ]]; then
+    ssh_win "powershell -Command \"New-NetFirewallRule -DisplayName 'NTP-IN' -Direction Inbound -Protocol UDP -LocalPort 123 -Action Allow | Out-Null\"" || warn "Création règle firewall échouée"
     ok "Règle firewall NTP-IN créée"
 else
     ok "Règle firewall NTP-IN existe déjà"
@@ -183,7 +183,7 @@ sleep 3
 TEST=$(sudo -u librenms ssh -i "$SSH_KEY_PATH" \
     -o StrictHostKeyChecking=no \
     -o BatchMode=yes \
-    -o ConnectTimeout=10 \
+    -o ConnectTimeout=30 \
     "$WIN_USER@$WIN_IP" \
     "Get-Service W32Time" 2>&1)
 
