@@ -10,6 +10,11 @@ Pour lancer le script Donner les droits au fichier du script :
 ```
 sudo chmod +x "NomDuFichier.sh"
 ```
+Avant d'executer le script il faut faire cette commande sur le serveur :
+```
+sudo apt update && sudo apt install -y sshpass
+```
+
 Lancement du script
 ```
 sudo bash setup-win-librenms.sh \
