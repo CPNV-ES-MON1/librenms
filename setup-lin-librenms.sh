@@ -48,7 +48,7 @@ if [[ -z "$LIN_IP" || -z "$LIN_PASSWORD" || -z "$MYSQL_PASSWORD" ]]; then
     echo ""
     echo "Arguments optionnels:"
     echo "  --lin-user        Utilisateur Linux (défaut: cpnv)"
-    echo "  --librenms-ip     IP du serveur LibreNMS (défaut: 10.229.37.249)"
+    echo "  --librenms-ip     IP du serveur LibreNMS"
     echo "  --snmp-community  Communauté SNMP (défaut: public)"
     exit 1
 fi
@@ -94,14 +94,69 @@ step "Configuration de la fréquence de poll à 1 minute"
 
 if ! grep -q "^\* \* \* \* \* librenms.*poller-wrapper" /etc/cron.d/librenms; then
     sed -i 's|^[^#]*poller-wrapper\.py 16|* * * * * librenms /opt/librenms/cronic /opt/librenms/poller-wrapper.py 16|' /etc/cron.d/librenms
-    systemctl restart cron
     ok "Fréquence de poll configurée à 1 minute"
 else
     ok "Fréquence de poll déjà à 1 minute"
 fi
 
+if ! grep -q "^\* \* \* \* \* librenms.*check-services" /etc/cron.d/librenms; then
+    sed -i 's|^[^#]*check-services\.php.*|* * * * * librenms /opt/librenms/check-services.php >> /dev/null 2>\&1|' /etc/cron.d/librenms
+    ok "Fréquence check-services configurée à 1 minute"
+else
+    ok "Fréquence check-services déjà à 1 minute"
+fi
+
+systemctl restart cron
+
 # ==============================================================================
-# ÉTAPE 3 : Générer la clé SSH sur le serveur LibreNMS
+# ÉTAPE 3 : Créer le transport Program.php si absent
+# ==============================================================================
+step "Vérification du transport Program.php"
+
+TRANSPORT_PHP="/opt/librenms/LibreNMS/Alert/Transport/Program.php"
+if [ ! -f "$TRANSPORT_PHP" ]; then
+    cat > "$TRANSPORT_PHP" << 'EOF'
+<?php
+
+namespace LibreNMS\Alert\Transport;
+
+use LibreNMS\Alert\Transport;
+
+class Program extends Transport
+{
+    public function deliverAlert(array $alert_data): bool
+    {
+        $program = $this->config['program'];
+        exec($program, $output, $ret);
+        return $ret === 0;
+    }
+
+    public static function configTemplate(): array
+    {
+        return [
+            'config' => [
+                [
+                    'title' => 'Program',
+                    'name'  => 'program',
+                    'descr' => 'Path to program to execute',
+                    'type'  => 'text',
+                ],
+            ],
+            'validation' => [
+                'program' => 'required|string',
+            ],
+        ];
+    }
+}
+EOF
+    chown librenms:librenms "$TRANSPORT_PHP"
+    ok "Transport Program.php créé"
+else
+    ok "Transport Program.php existe déjà"
+fi
+
+# ==============================================================================
+# ÉTAPE 4 : Générer la clé SSH sur le serveur LibreNMS
 # ==============================================================================
 step "Génération de la clé SSH sur le serveur LibreNMS"
 
@@ -115,10 +170,8 @@ else
     ok "Clé SSH existe déjà : $SSH_KEY_PATH"
 fi
 
-PUB_KEY=$(cat "${SSH_KEY_PATH}.pub")
-
 # ==============================================================================
-# ÉTAPE 4 : Copier la clé publique vers le client Linux
+# ÉTAPE 5 : Copier la clé publique vers le client Linux
 # ==============================================================================
 step "Copie de la clé publique vers le client Linux"
 
@@ -129,7 +182,7 @@ sshpass -p "$LIN_PASSWORD" ssh-copy-id \
 ok "Clé publique copiée vers $LIN_IP"
 
 # ==============================================================================
-# ÉTAPE 5 : Tester la connexion SSH sans mot de passe
+# ÉTAPE 6 : Tester la connexion SSH sans mot de passe
 # ==============================================================================
 step "Test de la connexion SSH depuis LibreNMS vers Linux"
 
@@ -148,7 +201,7 @@ else
 fi
 
 # ==============================================================================
-# ÉTAPE 6 : Créer le script de restart ntpsec
+# ÉTAPE 7 : Créer le script de restart ntpsec
 # ==============================================================================
 step "Création du script de restart ntpsec"
 
@@ -172,7 +225,7 @@ else
 fi
 
 # ==============================================================================
-# ÉTAPE 7 : Configurer LibreNMS (transport, opération, segment, rule)
+# ÉTAPE 8 : Configurer LibreNMS (transport, opération, segment, rule)
 # ==============================================================================
 step "Configuration de LibreNMS (transport, opération, rule)"
 
@@ -227,7 +280,7 @@ else
 fi
 
 # ==============================================================================
-# ÉTAPE 8 : Ajouter le service NTP dans LibreNMS
+# ÉTAPE 9 : Ajouter le service NTP dans LibreNMS
 # ==============================================================================
 step "Ajout du service NTP dans LibreNMS"
 
@@ -246,13 +299,12 @@ else
 fi
 
 # ==============================================================================
-# ÉTAPE 9 : Location, unix-agent, discovery et poll
+# ÉTAPE 10 : Location, unix-agent, discovery et poll
 # ==============================================================================
 step "Location, unix-agent, discovery et poll"
 
 cd /opt/librenms
 
-# Location
 LOCATION_ID=$(mysql_cmd "SELECT id FROM locations WHERE location='Datacenter' LIMIT 1;")
 if [[ -z "$LOCATION_ID" ]]; then
     mysql_cmd "INSERT INTO locations (location) VALUES ('Datacenter');"
@@ -264,7 +316,6 @@ if [[ -n "$DEVICE_ID_TMP" ]]; then
     mysql_cmd "UPDATE devices SET location_id=$LOCATION_ID WHERE device_id=$DEVICE_ID_TMP;"
     ok "Location 'Datacenter' assignée au device"
 
-    # Activer unix-agent
     AGENT_EXISTS=$(mysql_cmd "SELECT COUNT(*) FROM devices_attribs WHERE device_id=$DEVICE_ID_TMP AND attrib_type='poll_unix-agent';")
     if [[ "$AGENT_EXISTS" == "0" ]]; then
         mysql_cmd "INSERT INTO devices_attribs (device_id, attrib_type, attrib_value) VALUES ($DEVICE_ID_TMP, 'poll_unix-agent', '1');"
@@ -280,7 +331,7 @@ sleep 5
 sudo -u librenms php artisan device:poll "$LIN_IP" 2>/dev/null && ok "Poll effectué" || warn "Poll échoué"
 
 # ==============================================================================
-# ÉTAPE 10 : Activer le module services dans LibreNMS
+# ÉTAPE 11 : Activer le module services dans LibreNMS
 # ==============================================================================
 step "Activation du module services dans LibreNMS"
 
@@ -305,7 +356,7 @@ echo "  Script restart   : $SCRIPT_PATH"
 echo ""
 echo "  Pour tester le scénario :"
 echo "    Sur Linux : sudo systemctl stop ntpsec"
-echo "    Attendre ~2 minutes"
+echo "    Attendre ~1 minute"
 echo "    Sur Linux : systemctl status ntpsec  # doit être active"
 echo ""
 echo "  Pour vérifier les alertes :"
