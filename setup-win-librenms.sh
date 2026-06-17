@@ -20,7 +20,7 @@ WIN_IP=""
 WIN_USER="Administrator"
 WIN_PASSWORD=""
 MYSQL_PASSWORD=""
-LIBRENMS_IP="10.0.2.10"
+LIBRENMS_IP=""
 SNMP_COMMUNITY="public"
 SSH_KEY_PATH="/var/lib/librenms/.ssh/librenms_restart"
 SCRIPT_PATH="/opt/librenms/scripts/restart_w32time_client.sh"
@@ -48,7 +48,7 @@ if [[ -z "$WIN_IP" || -z "$WIN_PASSWORD" || -z "$MYSQL_PASSWORD" ]]; then
     echo ""
     echo "Arguments optionnels:"
     echo "  --win-user        Utilisateur Windows (défaut: Administrator)"
-    echo "  --librenms-ip     IP du serveur LibreNMS (défaut: 10.229.37.249)"
+    echo "  --librenms-ip     IP du serveur LibreNMS (défaut: 10.0.2.10)"
     echo "  --snmp-community  Communauté SNMP (défaut: public)"
     exit 1
 fi
@@ -94,14 +94,69 @@ step "Configuration de la fréquence de poll à 1 minute"
 
 if ! grep -q "^\* \* \* \* \* librenms.*poller-wrapper" /etc/cron.d/librenms; then
     sed -i 's|^[^#]*poller-wrapper\.py 16|* * * * * librenms /opt/librenms/cronic /opt/librenms/poller-wrapper.py 16|' /etc/cron.d/librenms
-    systemctl restart cron
     ok "Fréquence de poll configurée à 1 minute"
 else
     ok "Fréquence de poll déjà à 1 minute"
 fi
 
+if ! grep -q "^\* \* \* \* \* librenms.*check-services" /etc/cron.d/librenms; then
+    sed -i 's|^[^#]*check-services\.php.*|* * * * * librenms /opt/librenms/check-services.php >> /dev/null 2>\&1|' /etc/cron.d/librenms
+    ok "Fréquence check-services configurée à 1 minute"
+else
+    ok "Fréquence check-services déjà à 1 minute"
+fi
+
+systemctl restart cron
+
 # ==============================================================================
-# ÉTAPE 3 : Générer la clé SSH sur le serveur LibreNMS
+# ÉTAPE 3 : Créer le transport Program.php si absent
+# ==============================================================================
+step "Vérification du transport Program.php"
+
+TRANSPORT_PHP="/opt/librenms/LibreNMS/Alert/Transport/Program.php"
+if [ ! -f "$TRANSPORT_PHP" ]; then
+    cat > "$TRANSPORT_PHP" << 'EOF'
+<?php
+
+namespace LibreNMS\Alert\Transport;
+
+use LibreNMS\Alert\Transport;
+
+class Program extends Transport
+{
+    public function deliverAlert(array $alert_data): bool
+    {
+        $program = $this->config['program'];
+        exec($program, $output, $ret);
+        return $ret === 0;
+    }
+
+    public static function configTemplate(): array
+    {
+        return [
+            'config' => [
+                [
+                    'title' => 'Program',
+                    'name'  => 'program',
+                    'descr' => 'Path to program to execute',
+                    'type'  => 'text',
+                ],
+            ],
+            'validation' => [
+                'program' => 'required|string',
+            ],
+        ];
+    }
+}
+EOF
+    chown librenms:librenms "$TRANSPORT_PHP"
+    ok "Transport Program.php créé"
+else
+    ok "Transport Program.php existe déjà"
+fi
+
+# ==============================================================================
+# ÉTAPE 4 : Générer la clé SSH sur le serveur LibreNMS
 # ==============================================================================
 step "Génération de la clé SSH sur le serveur LibreNMS"
 
@@ -118,7 +173,7 @@ fi
 PUB_KEY=$(cat "${SSH_KEY_PATH}.pub")
 
 # ==============================================================================
-# ÉTAPE 4 : Configurer OpenSSH Server sur Windows
+# ÉTAPE 5 : Configurer OpenSSH Server sur Windows
 # ==============================================================================
 step "Démarrage et activation de OpenSSH Server sur Windows"
 
@@ -126,7 +181,7 @@ ssh_win "powershell -Command \"Start-Service sshd; Set-Service -Name sshd -Start
 ok "OpenSSH Server démarré et activé"
 
 # ==============================================================================
-# ÉTAPE 5 : Configurer PowerShell comme shell SSH par défaut
+# ÉTAPE 6 : Configurer PowerShell comme shell SSH par défaut
 # ==============================================================================
 step "Configuration de PowerShell comme shell SSH par défaut"
 
@@ -134,7 +189,7 @@ ssh_win "powershell -Command \"New-ItemProperty -Path 'HKLM:\\SOFTWARE\\OpenSSH'
 ok "PowerShell configuré comme shell SSH par défaut"
 
 # ==============================================================================
-# ÉTAPE 6 : Copier la clé publique vers Windows
+# ÉTAPE 7 : Copier la clé publique vers Windows
 # ==============================================================================
 step "Configuration de authorized_keys sur Windows"
 
@@ -146,7 +201,7 @@ icacls 'C:\\ProgramData\\ssh\\administrators_authorized_keys' /inheritance:r /gr
 ok "authorized_keys configuré"
 
 # ==============================================================================
-# ÉTAPE 7 : Activer W32Time comme serveur NTP
+# ÉTAPE 8 : Activer W32Time comme serveur NTP
 # ==============================================================================
 step "Configuration de W32Time comme serveur NTP"
 
@@ -158,7 +213,7 @@ Restart-Service W32Time
 ok "W32Time configuré comme serveur NTP"
 
 # ==============================================================================
-# ÉTAPE 8 : Autoriser NTP dans le firewall Windows
+# ÉTAPE 9 : Autoriser NTP dans le firewall Windows
 # ==============================================================================
 step "Configuration du firewall Windows (port 123 UDP)"
 
@@ -175,7 +230,7 @@ else
 fi
 
 # ==============================================================================
-# ÉTAPE 9 : Tester la connexion SSH sans mot de passe depuis LibreNMS
+# ÉTAPE 10 : Tester la connexion SSH sans mot de passe depuis LibreNMS
 # ==============================================================================
 step "Test de la connexion SSH depuis LibreNMS vers Windows"
 
@@ -195,7 +250,7 @@ else
 fi
 
 # ==============================================================================
-# ÉTAPE 10 : Créer le script de restart sur le serveur LibreNMS
+# ÉTAPE 11 : Créer le script de restart sur le serveur LibreNMS
 # ==============================================================================
 step "Création du script de restart W32Time"
 
@@ -219,7 +274,7 @@ else
 fi
 
 # ==============================================================================
-# ÉTAPE 11 : Configurer LibreNMS (transport, opération, segment, rule)
+# ÉTAPE 12 : Configurer LibreNMS (transport, opération, segment, rule)
 # ==============================================================================
 step "Configuration de LibreNMS (transport, opération, rule)"
 
@@ -274,7 +329,7 @@ else
 fi
 
 # ==============================================================================
-# ÉTAPE 12 : Ajouter le service NTP dans LibreNMS
+# ÉTAPE 13 : Ajouter le service NTP dans LibreNMS
 # ==============================================================================
 step "Ajout du service NTP dans LibreNMS"
 
@@ -294,25 +349,22 @@ else
 fi
 
 # ==============================================================================
-# ÉTAPE 13 : Forcer la découverte et le poll du device
+# ÉTAPE 14 : Forcer la découverte et le poll du device
 # ==============================================================================
 step "Découverte et poll du device Windows"
 
 cd /opt/librenms
-# Ajouter la location Datacenter si elle n existe pas
 LOCATION_ID=$(mysql_cmd "SELECT id FROM locations WHERE location='Datacenter' LIMIT 1;")
 if [[ -z "$LOCATION_ID" ]]; then
     mysql_cmd "INSERT INTO locations (location) VALUES ('Datacenter');"
     LOCATION_ID=$(mysql_cmd "SELECT id FROM locations WHERE location='Datacenter' LIMIT 1;")
 fi
 
-# Assigner la location au device et activer unix-agent
 DEVICE_ID_TMP=$(mysql_cmd "SELECT device_id FROM devices WHERE hostname='$WIN_IP';")
 if [[ -n "$DEVICE_ID_TMP" ]]; then
     mysql_cmd "UPDATE devices SET location_id=$LOCATION_ID WHERE device_id=$DEVICE_ID_TMP;"
     ok "Location 'Datacenter' assignée au device"
 
-    # Activer le module unix-agent pour Check_MK
     AGENT_EXISTS=$(mysql_cmd "SELECT COUNT(*) FROM devices_attribs WHERE device_id=$DEVICE_ID_TMP AND attrib_type='poll_unix-agent';")
     if [[ "$AGENT_EXISTS" == "0" ]]; then
         mysql_cmd "INSERT INTO devices_attribs (device_id, attrib_type, attrib_value) VALUES ($DEVICE_ID_TMP, 'poll_unix-agent', '1');"
@@ -328,7 +380,7 @@ sleep 5
 sudo -u librenms php artisan device:poll "$WIN_IP" 2>/dev/null && ok "Poll effectué" || warn "Poll échoué"
 
 # ==============================================================================
-# ÉTAPE 14 : Activer le module services dans LibreNMS
+# ÉTAPE 15 : Activer le module services dans LibreNMS
 # ==============================================================================
 step "Activation du module services dans LibreNMS"
 
@@ -353,7 +405,7 @@ echo "  Script restart   : $SCRIPT_PATH"
 echo ""
 echo "  Pour tester le scénario :"
 echo "    Sur Windows : Stop-Service W32Time"
-echo "    Attendre ~2 minutes"
+echo "    Attendre ~1 minute"
 echo "    Sur Windows : Get-Service W32Time  # doit être Running"
 echo ""
 echo "  Pour vérifier les alertes :"
