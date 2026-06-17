@@ -31,5 +31,10 @@ sudo bash setup-win-librenms.sh \
   --win-password 'Mot de passe du client Windows' \
   --mysql-password 'Mot de passe mysql'
   ```
+Installer ensuite le plugin Nagios et faites un pool sur les clients :
+```
+sudo apt update && sudo apt install -y nagios-plugins-basic nagios-plugins-standard
+sudo -u librenms php /opt/librenms/check-services.php -d
+```
 
 Ce script va permettre de mettre en place les différentes règles firewall, l'installation de l'agent, le redémmarage d'un service automatiquement et d'ajouter le client sur LibreNMS.
