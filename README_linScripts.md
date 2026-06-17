@@ -42,4 +42,10 @@ Lancement du script
 sudo bash setup-lin-librenms.sh --lin-ip "Ip client linux"   --lin-password 'MDP du compte CPNV linux'   --mysql-password 'MDP mysql'
   ```
 
+Installer ensuite le plugin Nagios et faites un pool sur les clients :
+```
+sudo apt update && sudo apt install -y nagios-plugins-basic nagios-plugins-standard
+sudo -u librenms php /opt/librenms/check-services.php -d
+```
+
 Ce script va permettre de mettre en place les différentes règles firewall, l'installation de l'agent, le redémmarage d'un service automatiquement et d'ajouter le client sur LibreNMS.
