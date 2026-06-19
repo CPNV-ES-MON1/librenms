@@ -1,5 +1,10 @@
 # Déploiement du Script
 
+Récupérer le script
+```
+curl -o ScriptInstallationLibreNMS.sh https://raw.githubusercontent.com/CPNV-ES-MON1/librenms/develop/ScriptInstallationLibreNMS.sh
+```
+
 Script d'installation LibreNMS
 Le script contient toute l'installation à partir d'une machine vierge ayant Ubuntu 24.04.
 
