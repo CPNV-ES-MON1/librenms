@@ -1,127 +1,34 @@
-# LIBRE NMS
+# Déploiement du Script
 
-## Description
-
-This project is designed to .... and the main features are ...
-
-## Getting Started
-
-### Prerequisites
-
-List all dependencies and their version needed to run the project as :
-
-|Role|Tool|Version|
-|:--|:--|:--|
-|VCS|Git SCM|[2.54 or higher](https://git-scm.com/install/)|
-|IaC|Terraform|[1.15 or higher](https://developer.hashicorp.com/terraform/install)|
-|IDE|VS Code|[1.118 or higher](https://code.visualstudio.com/thank-you?dv=linux64_deb)|
-|Virtualization|Docker Engine|[v29 or higher](https://docs.docker.com/engine/install/)|
-
-### Configuration
-
-* Cloud Provider Credentials
-
-You will need acces to the cloud provider including this following permissions:
-
+Récupérer le script
 ```
-         "ec2:DescribeInstances", 
-         "ec2:DescribeImages",
-         "ec2:DescribeTags", 
-         "ec2:DescribeSnapshots"
+curl -o ScriptInstallationLibreNMS.sh https://raw.githubusercontent.com/CPNV-ES-MON1/librenms/develop/ScriptInstallationLibreNMS.sh
 ```
 
-* Licence
+Script d'installation LibreNMS
+Le script contient toute l'installation à partir d'une machine vierge ayant Ubuntu 24.04.
 
-A licence need to be requested to info@myproduct.com.
-
-
-## Deployment
-
-### On dev environment
-
-* Set the environments variables
-
+Pour lancer le script 
+Donner les droits au fichier du script :
 ```
-cp sample.env dev.env
+sudo chmod +x "NomDuFichier.sh"
 ```
 
-Update all variable according to your setup.
-
-
-### On stage environment
-
-* Set the environments variables
-
+Lancement du script
 ```
-cp sample.env stage.env
+sudo bash "NomDuFichier.sh" --db-pass "Pa$$w0rd" --admin-user "cpnv" --admin-pass "Pa$$w0rd"
 ```
+Arguments obligatoires :
+- --db-pass Mot de passe de l'utilisateur MariaDB
+- --admin-user Nom d'utilisateur administrateur LibreNMS
+- --admin-pass Mot de passe administrateur LibreNMS
 
-Update all variable according to your setup.
+Ce que fait le script automatiquement
 
-## Directory structure
+- Installe et configure tous les composants (PHP 8.3, Nginx, MariaDB, SNMP, rrdcached)
+- Crée la base de données et l'utilisateur
+- Déploie LibreNMS et crée le compte administrateur
+- Ajoute la machine locale comme device et lance la première collecte de métriques
 
-Here you are a sample of project structure. It's must be adapted to your stack.
+À la fin du script, LibreNMS est accessible via http://<IP_DE_LA_MACHINE>
 
-```shell
-project-root/
-├── README.md
-├── .env.example              # environment variables template
-
-├── config/                   # configuration (per environment)
-│   ├── dev.env
-│   ├── staging.env
-│   └── prod.env
-
-├── bin/                      # entrypoints (what you actually run)
-│   ├── deploy.sh
-│   ├── destroy.sh
-│   └── status.sh
-
-├── lib/                      # shared logic (like "modules")
-│   ├── log.sh
-│   ├── utils.sh
-│   ├── checks.sh             # preflight checks
-│   └── state.sh              # poor man's state management
-
-├── services/                 # components of your stack
-│   ├── network/
-│   │   ├── create.sh
-│   │   └── destroy.sh
-│   │
-│   ├── compute/
-│   │   ├── create.sh
-│   │   └── destroy.sh
-│   │
-│   ├── monitoring/
-│   │   ├── prometheus.sh
-│   │   ├── grafana.sh
-│   │   └── alertmanager.sh
-│   │
-│   └── security/
-│       ├── iam.sh
-│       └── secrets.sh
-
-├── state/                    # local state tracking
-│   └── deployed.json
-
-├── scripts/                  # helpers (optional)
-│   ├── install_deps.sh
-│   └── lint.sh
-
-└── logs/
-    └── deploy.log
-```
-
-## Collaborate
-
-* How to propose a new feature (issue, pull request)
-* [How to commit](https://www.conventionalcommits.org/en/v1.0.0/)
-* [How to use your workflow](https://nvie.com/posts/a-successful-git-branching-model/)
-
-## License
-
-* [Choose the license adapted to your project](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository).
-
-## Contact
-
-* How to get in contact with you? Discord, Trello, Issue?
